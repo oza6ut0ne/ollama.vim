@@ -43,7 +43,7 @@ highlight ollama_hl_info guifg=#77ff2f ctermfg=119
 "
 let s:default_config = {
     \ 'endpoint':           'http://127.0.0.1:11434/api/generate',
-    \ 'model':             '',  " Empty by default, user must specify
+    \ 'model':              '',
     \ 'api_key':            '',
     \ 'n_prefix':           256,
     \ 'n_suffix':           64,
@@ -353,9 +353,9 @@ function! s:ring_update()
 
     " no samplers needed here
     let l:request = json_encode({
-        \ 'model': g:ollama_config.model,  " Use the configured model
-        \ 'prompt': l:prefix . l:middle,
-        \ 'suffix': l:suffix,
+        \ 'model': g:ollama_config.model,
+        \ 'prompt': "",
+        \ 'suffix': "",
         \ 'stream': v:false,
         \ 'options': {
         \     'num_predict': g:ollama_config.n_predict,
@@ -588,7 +588,7 @@ function! ollama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
     endfor
 
     let l:request = json_encode({
-        \ 'model': g:ollama_config.model,  " Use the configured model
+        \ 'model': g:ollama_config.model,
         \ 'prompt': l:prefix . l:middle,
         \ 'suffix': l:suffix,
         \ 'stream': v:false,
