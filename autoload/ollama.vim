@@ -1,12 +1,12 @@
 " vim: ts=4 sts=4 expandtab
 " colors (adjust to your liking)
-highlight llama_hl_hint guifg=#ff772f ctermfg=202
-highlight llama_hl_info guifg=#77ff2f ctermfg=119
+highlight ollama_hl_hint guifg=#ff772f ctermfg=202
+highlight ollama_hl_info guifg=#77ff2f ctermfg=119
 
 " general parameters:
 "
-"   endpoint:         llama.cpp server endpoint
-"   api_key:          llama.cpp server api key (optional)
+"   endpoint:         ollama server endpoint
+"   api_key:          ollama server api key (optional)
 "   n_prefix:         number of lines before the cursor location to include in the local prefix
 "   n_suffix:         number of lines after  the cursor location to include in the local suffix
 "   n_predict:        max number of tokens to predict
@@ -42,7 +42,8 @@ highlight llama_hl_info guifg=#77ff2f ctermfg=119
 "   keymap_accept_word: keymap to accept word suggestion, default: <C-B>
 "
 let s:default_config = {
-    \ 'endpoint':           'http://127.0.0.1:8012/infill',
+    \ 'endpoint':           'http://127.0.0.1:11434/api/generate',
+    \ 'model':              '',
     \ 'api_key':            '',
     \ 'n_prefix':           256,
     \ 'n_suffix':           64,
@@ -63,10 +64,10 @@ let s:default_config = {
     \ 'keymap_accept_word': "<C-B>",
     \ }
 
-let llama_config = get(g:, 'llama_config', s:default_config)
-let g:llama_config = extendnew(s:default_config, llama_config, 'force')
+let ollama_config = get(g:, 'ollama_config', s:default_config)
+let g:ollama_config = extendnew(s:default_config, ollama_config, 'force')
 
-let s:llama_enabled = v:true
+let s:ollama_enabled = v:true
 
 " containes cached responses from the server
 " used to avoid re-computing the same completions and to also create new completions with similar context
@@ -75,7 +76,7 @@ let g:cache_data = {}
 
 " TODO: Currently the cache uses a random eviction policy. A more clever policy could be implemented (eg. LRU).
 function! s:cache_insert(key, value)
-    if len(keys(g:cache_data)) > (g:llama_config.max_cache_keys - 1)
+    if len(keys(g:cache_data)) > (g:ollama_config.max_cache_keys - 1)
         let l:keys = keys(g:cache_data)
         let l:hash = l:keys[rand() % len(l:keys)]
         call remove(g:cache_data, l:hash)
@@ -102,36 +103,45 @@ function! s:rand(i0, i1) abort
     return a:i0 + rand() % (a:i1 - a:i0 + 1)
 endfunction
 
-function! llama#disable()
-    call llama#fim_hide()
-    autocmd! llama
-    exe "silent! iunmap " .. g:llama_config.keymap_trigger
+function! ollama#disable()
+    call ollama#fim_hide()
+    autocmd! ollama
+    exe "silent! iunmap " .. g:ollama_config.keymap_trigger
 endfunction
 
-function! llama#toggle()
-    if s:llama_enabled
-        call llama#disable()
+function! ollama#toggle()
+    if s:ollama_enabled
+        call ollama#disable()
     else
-        call llama#init()
+        call ollama#init()
     endif
-    let s:llama_enabled = !s:llama_enabled
+    let s:ollama_enabled = !s:ollama_enabled
 endfunction
 
-function llama#setup_commands()
-    command! LlamaEnable  call llama#init()
-    command! LlamaDisable call llama#disable()
-    command! LlamaToggle  call llama#toggle()
+function ollama#setup_commands()
+    command! OllamaEnable  call ollama#init()
+    command! OllamaDisable call ollama#disable()
+    command! OllamaToggle  call ollama#toggle()
 endfunction
 
-function! llama#init()
+function! ollama#init()
     if !executable('curl')
         echohl WarningMsg
-        echo 'llama.vim requires the "curl" command to be available'
+        echo 'ollama.vim requires the "curl" command to be available'
         echohl None
         return
     endif
 
-    call llama#setup_commands()
+    " Check if model is specified
+    if empty(g:ollama_config.model)
+        echohl WarningMsg
+        echo 'ollama.vim requires a model to be specified in g:ollama_config.model'
+        echo 'Example: let g:ollama_config.model = "deepseek-coder-v2"'
+        echohl None
+        return
+    endif
+
+    call ollama#setup_commands()
 
     let s:fim_data = {}
 
@@ -153,10 +163,10 @@ function! llama#init()
 
     if s:ghost_text_vim
         if version < 901
-            echom 'Warning: llama.vim requires version 901 or greater. Current version: ' . version
+            echom 'Warning: ollama.vim requires version 901 or greater. Current version: ' . version
         endif
-        let s:hlgroup_hint = 'llama_hl_hint'
-        let s:hlgroup_info = 'llama_hl_info'
+        let s:hlgroup_hint = 'ollama_hl_hint'
+        let s:hlgroup_info = 'ollama_hl_info'
 
         if empty(prop_type_get(s:hlgroup_hint))
             call prop_type_add(s:hlgroup_hint, {'highlight': s:hlgroup_hint})
@@ -166,36 +176,36 @@ function! llama#init()
         endif
     endif
 
-    augroup llama
+    augroup ollama
         autocmd!
-        exe "autocmd InsertEnter * inoremap <expr> <silent> " .. g:llama_config.keymap_trigger .. " llama#fim_inline(v:false, v:false)"
-        autocmd InsertLeavePre  * call llama#fim_hide()
+        exe "autocmd InsertEnter * inoremap <expr> <silent> " .. g:ollama_config.keymap_trigger .. " ollama#fim_inline(v:false, v:false)"
+        autocmd InsertLeavePre  * call ollama#fim_hide()
 
         autocmd CursorMoved     * call s:on_move()
         autocmd CursorMovedI    * call s:on_move()
 
-        autocmd CompleteChanged * call llama#fim_hide()
+        autocmd CompleteChanged * call ollama#fim_hide()
         autocmd CompleteDone    * call s:on_move()
 
-        if g:llama_config.auto_fim
-            autocmd CursorMovedI * call llama#fim(-1, -1, v:true, [], v:true)
+        if g:ollama_config.auto_fim
+            autocmd CursorMovedI * call ollama#fim(-1, -1, v:true, [], v:true)
         endif
 
         " gather chunks upon yanking
         autocmd TextYankPost    * if v:event.operator ==# 'y' | call s:pick_chunk(v:event.regcontents, v:false, v:true) | endif
 
         " gather chunks upon entering/leaving a buffer
-        autocmd BufEnter        * call timer_start(100, {-> s:pick_chunk(getline(max([1, line('.') - g:llama_config.ring_chunk_size/2]), min([line('.') + g:llama_config.ring_chunk_size/2, line('$')])), v:true, v:true)})
-        autocmd BufLeave        * call                      s:pick_chunk(getline(max([1, line('.') - g:llama_config.ring_chunk_size/2]), min([line('.') + g:llama_config.ring_chunk_size/2, line('$')])), v:true, v:true)
+        autocmd BufEnter        * call timer_start(100, {-> s:pick_chunk(getline(max([1, line('.') - g:ollama_config.ring_chunk_size/2]), min([line('.') + g:ollama_config.ring_chunk_size/2, line('$')])), v:true, v:true)})
+        autocmd BufLeave        * call                      s:pick_chunk(getline(max([1, line('.') - g:ollama_config.ring_chunk_size/2]), min([line('.') + g:ollama_config.ring_chunk_size/2, line('$')])), v:true, v:true)
 
         " gather chunk upon saving the file
-        autocmd BufWritePost    * call s:pick_chunk(getline(max([1, line('.') - g:llama_config.ring_chunk_size/2]), min([line('.') + g:llama_config.ring_chunk_size/2, line('$')])), v:true, v:true)
+        autocmd BufWritePost    * call s:pick_chunk(getline(max([1, line('.') - g:ollama_config.ring_chunk_size/2]), min([line('.') + g:ollama_config.ring_chunk_size/2, line('$')])), v:true, v:true)
     augroup END
 
-    silent! call llama#fim_hide()
+    silent! call ollama#fim_hide()
 
     " init background update of the ring buffer
-    if g:llama_config.ring_n_chunks > 0
+    if g:ollama_config.ring_n_chunks > 0
         call s:ring_update()
     endif
 endfunction
@@ -221,7 +231,7 @@ function! s:chunk_sim(c0, c1)
     return 2.0 * l:common / (l:lines0 + l:lines1)
 endfunction
 
-" pick a random chunk of size g:llama_config.ring_chunk_size from the provided text and queue it for processing
+" pick a random chunk of size g:ollama_config.ring_chunk_size from the provided text and queue it for processing
 "
 " no_mod   - do not pick chunks from buffers with pending changes
 " do_evict - evict chunks that are very similar to the new one
@@ -233,7 +243,7 @@ function! s:pick_chunk(text, no_mod, do_evict)
     endif
 
     " if the extra context option is disabled - do nothing
-    if g:llama_config.ring_n_chunks <= 0
+    if g:ollama_config.ring_n_chunks <= 0
         return
     endif
 
@@ -242,11 +252,11 @@ function! s:pick_chunk(text, no_mod, do_evict)
         return
     endif
 
-    if len(a:text) + 1 < g:llama_config.ring_chunk_size
+    if len(a:text) + 1 < g:ollama_config.ring_chunk_size
         let l:chunk = a:text
     else
-        let l:l0 = s:rand(0, max([0, len(a:text) - g:llama_config.ring_chunk_size/2]))
-        let l:l1 = min([l:l0 + g:llama_config.ring_chunk_size/2, len(a:text)])
+        let l:l0 = s:rand(0, max([0, len(a:text) - g:ollama_config.ring_chunk_size/2]))
+        let l:l1 = min([l:l0 + g:ollama_config.ring_chunk_size/2, len(a:text)])
 
         let l:chunk = a:text[l:l0:l:l1]
     endif
@@ -309,9 +319,9 @@ function! s:pick_chunk(text, no_mod, do_evict)
 endfunction
 
 " picks a queued chunk, sends it for processing and adds it to s:ring_chunks
-" called every g:llama_config.ring_update_ms
+" called every g:ollama_config.ring_update_ms
 function! s:ring_update()
-    call timer_start(g:llama_config.ring_update_ms, {-> s:ring_update()})
+    call timer_start(g:ollama_config.ring_update_ms, {-> s:ring_update()})
 
     " update only if in normal mode or if the cursor hasn't moved for a while
     if mode() !=# 'n' && reltimefloat(reltime(s:t_last_move)) < 3.0
@@ -323,7 +333,7 @@ function! s:ring_update()
     endif
 
     " move the first queued chunk to the ring buffer
-    if len(s:ring_chunks) == g:llama_config.ring_n_chunks
+    if len(s:ring_chunks) == g:ollama_config.ring_n_chunks
         call remove(s:ring_chunks, 0)
     endif
 
@@ -343,18 +353,16 @@ function! s:ring_update()
 
     " no samplers needed here
     let l:request = json_encode({
-        \ 'input_prefix':     "",
-        \ 'input_suffix':     "",
-        \ 'input_extra':      l:extra_context,
-        \ 'prompt':           "",
-        \ 'n_predict':        0,
-        \ 'temperature':      0.0,
-        \ 'stream':           v:false,
-        \ 'samplers':         [],
-        \ 'cache_prompt':     v:true,
-        \ 't_max_prompt_ms':  1,
-        \ 't_max_predict_ms': 1,
-        \ 'response_fields':  [""]
+        \ 'model': g:ollama_config.model,
+        \ 'prompt': "",
+        \ 'suffix': "",
+        \ 'stream': v:false,
+        \ 'options': {
+        \     'num_predict': g:ollama_config.n_predict,
+        \     'temperature': 0.7,
+        \     'top_k': 40,
+        \     'top_p': 0.90
+        \ }
         \ })
 
     let l:curl_command = [
@@ -362,13 +370,13 @@ function! s:ring_update()
         \ "--silent",
         \ "--no-buffer",
         \ "--request", "POST",
-        \ "--url", g:llama_config.endpoint,
+        \ "--url", g:ollama_config.endpoint,
         \ "--header", "Content-Type: application/json",
         \ "--data", "@-",
         \ ]
 
-    if exists ("g:llama_config.api_key") && len("g:llama_config.api_key") > 0
-        call extend(l:curl_command, ['--header', 'Authorization: Bearer ' .. g:llama_config.api_key])
+    if exists ("g:ollama_config.api_key") && len("g:ollama_config.api_key") > 0
+        call extend(l:curl_command, ['--header', 'Authorization: Bearer ' .. g:ollama_config.api_key])
     endif
 
     " no callbacks because we don't need to process the response
@@ -396,8 +404,8 @@ function! s:fim_ctx_local(pos_x, pos_y, prev)
         let l:line_cur_prefix = strpart(l:line_cur, 0, a:pos_x)
         let l:line_cur_suffix = strpart(l:line_cur, a:pos_x)
 
-        let l:lines_prefix = getline(max([1, a:pos_y - g:llama_config.n_prefix]), a:pos_y - 1)
-        let l:lines_suffix = getline(a:pos_y + 1, min([l:max_y, a:pos_y + g:llama_config.n_suffix]))
+        let l:lines_prefix = getline(max([1, a:pos_y - g:ollama_config.n_prefix]), a:pos_y - 1)
+        let l:lines_suffix = getline(a:pos_y + 1, min([l:max_y, a:pos_y + g:ollama_config.n_suffix]))
 
         " special handling of lines full of whitespaces - start from the beginning of the line
         if match(l:line_cur, '^\s*$') >= 0
@@ -419,7 +427,7 @@ function! s:fim_ctx_local(pos_x, pos_y, prev)
         let l:line_cur_prefix = l:line_cur
         let l:line_cur_suffix = ""
 
-        let l:lines_prefix = getline(max([1, a:pos_y - g:llama_config.n_prefix + len(a:prev) - 1]), a:pos_y - 1)
+        let l:lines_prefix = getline(max([1, a:pos_y - g:ollama_config.n_prefix + len(a:prev) - 1]), a:pos_y - 1)
         if len(a:prev) > 1
             call add(l:lines_prefix, getline(a:pos_y) . a:prev[0])
 
@@ -428,7 +436,7 @@ function! s:fim_ctx_local(pos_x, pos_y, prev)
             endfor
         endif
 
-        let l:lines_suffix = getline(a:pos_y + 1, min([l:max_y, a:pos_y + g:llama_config.n_suffix]))
+        let l:lines_suffix = getline(a:pos_y + 1, min([l:max_y, a:pos_y + g:ollama_config.n_suffix]))
 
         let l:indent = s:indent_last
     endif
@@ -462,21 +470,21 @@ function! s:fim_ctx_local(pos_x, pos_y, prev)
 endfunction
 
 " necessary for 'inoremap <expr>'
-function! llama#fim_inline(is_auto, use_cache) abort
+function! ollama#fim_inline(is_auto, use_cache) abort
     " we already have a suggestion displayed - hide it
     if s:hint_shown && !a:is_auto
-        call llama#fim_hide()
+        call ollama#fim_hide()
         return ''
     endif
 
-    call llama#fim(-1, -1, a:is_auto, [], a:use_cache)
+    call ollama#fim(-1, -1, a:is_auto, [], a:use_cache)
 
     return ''
 endfunction
 
 " the main FIM call
 " takes local context around the cursor and sends it together with the extra context to the server for completion
-function! llama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
+function! ollama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
     let l:pos_x = a:pos_x
     let l:pos_y = a:pos_y
 
@@ -495,7 +503,7 @@ function! llama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
             let s:timer_fim = -1
         endif
 
-        let s:timer_fim = timer_start(100, {-> llama#fim(a:pos_x, a:pos_y, v:true, a:prev, a:use_cache)})
+        let s:timer_fim = timer_start(100, {-> ollama#fim(a:pos_x, a:pos_y, v:true, a:prev, a:use_cache)})
         return
     endif
 
@@ -512,11 +520,11 @@ function! llama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
     let l:suffix = l:ctx_local['suffix']
     let l:indent = l:ctx_local['indent']
 
-    if a:is_auto && len(l:ctx_local['line_cur_suffix']) > g:llama_config.max_line_suffix
+    if a:is_auto && len(l:ctx_local['line_cur_suffix']) > g:ollama_config.max_line_suffix
         return
     endif
 
-    let l:t_max_predict_ms = g:llama_config.t_max_predict_ms
+    let l:t_max_predict_ms = g:ollama_config.t_max_predict_ms
     if empty(a:prev)
         " the first request is quick - we will launch a speculative request after this one is displayed
         let l:t_max_predict_ms = 250
@@ -553,10 +561,10 @@ function! llama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
     let s:indent_last = l:indent
 
     " TODO: refactor in a function
-    let l:text = getline(max([1, line('.') - g:llama_config.ring_chunk_size/2]), min([line('.') + g:llama_config.ring_chunk_size/2, line('$')]))
+    let l:text = getline(max([1, line('.') - g:ollama_config.ring_chunk_size/2]), min([line('.') + g:ollama_config.ring_chunk_size/2, line('$')]))
 
-    let l:l0 = s:rand(0, max([0, len(l:text) - g:llama_config.ring_chunk_size/2]))
-    let l:l1 = min([l:l0 + g:llama_config.ring_chunk_size/2, len(l:text)])
+    let l:l0 = s:rand(0, max([0, len(l:text) - g:ollama_config.ring_chunk_size/2]))
+    let l:l1 = min([l:l0 + g:ollama_config.ring_chunk_size/2, len(l:text)])
 
     let l:chunk = l:text[l:l0:l:l1]
 
@@ -580,32 +588,16 @@ function! llama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
     endfor
 
     let l:request = json_encode({
-        \ 'input_prefix':     l:prefix,
-        \ 'input_suffix':     l:suffix,
-        \ 'input_extra':      l:extra_ctx,
-        \ 'prompt':           l:middle,
-        \ 'n_predict':        g:llama_config.n_predict,
-        \ 'n_indent':         l:indent,
-        \ 'top_k':            40,
-        \ 'top_p':            0.90,
-        \ 'stream':           v:false,
-        \ 'samplers':         ["top_k", "top_p", "infill"],
-        \ 'cache_prompt':     v:true,
-        \ 't_max_prompt_ms':  g:llama_config.t_max_prompt_ms,
-        \ 't_max_predict_ms': l:t_max_predict_ms,
-        \ 'response_fields':  [
-        \                       "content",
-        \                       "timings/prompt_n",
-        \                       "timings/prompt_ms",
-        \                       "timings/prompt_per_token_ms",
-        \                       "timings/prompt_per_second",
-        \                       "timings/predicted_n",
-        \                       "timings/predicted_ms",
-        \                       "timings/predicted_per_token_ms",
-        \                       "timings/predicted_per_second",
-        \                       "truncated",
-        \                       "tokens_cached",
-        \                     ],
+        \ 'model': g:ollama_config.model,
+        \ 'prompt': l:prefix . l:middle,
+        \ 'suffix': l:suffix,
+        \ 'stream': v:false,
+        \ 'options': {
+        \     'num_predict': g:ollama_config.n_predict,
+        \     'temperature': 0.7,
+        \     'top_k': 40,
+        \     'top_p': 0.90
+        \ }
         \ })
 
     let l:curl_command = [
@@ -613,13 +605,13 @@ function! llama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
         \ "--silent",
         \ "--no-buffer",
         \ "--request", "POST",
-        \ "--url", g:llama_config.endpoint,
+        \ "--url", g:ollama_config.endpoint,
         \ "--header", "Content-Type: application/json",
         \ "--data", "@-",
         \ ]
 
-    if exists ("g:llama_config.api_key") && len("g:llama_config.api_key") > 0
-        call extend(l:curl_command, ['--header', 'Authorization: Bearer ' .. g:llama_config.api_key])
+    if exists ("g:ollama_config.api_key") && len("g:ollama_config.api_key") > 0
+        call extend(l:curl_command, ['--header', 'Authorization: Bearer ' .. g:ollama_config.api_key])
     endif
 
     if s:current_job != v:null
@@ -660,10 +652,10 @@ function! llama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
         let l:max_y = line('$')
 
         " expand the prefix even further
-        call s:pick_chunk(getline(max([1,       l:pos_y - g:llama_config.ring_scope]), max([1,       l:pos_y - g:llama_config.n_prefix])), v:false, v:false)
+        call s:pick_chunk(getline(max([1,       l:pos_y - g:ollama_config.ring_scope]), max([1,       l:pos_y - g:ollama_config.n_prefix])), v:false, v:false)
 
         " pick a suffix chunk
-        call s:pick_chunk(getline(min([l:max_y, l:pos_y + g:llama_config.n_suffix]),   min([l:max_y, l:pos_y + g:llama_config.n_suffix + g:llama_config.ring_chunk_size])), v:false, v:false)
+        call s:pick_chunk(getline(min([l:max_y, l:pos_y + g:ollama_config.n_suffix]),   min([l:max_y, l:pos_y + g:ollama_config.n_suffix + g:ollama_config.ring_chunk_size])), v:false, v:false)
 
         let s:pos_y_pick = l:pos_y
     endif
@@ -707,7 +699,7 @@ endfunction
 function! s:on_move()
     let s:t_last_move = reltime()
 
-    call llama#fim_hide()
+    call ollama#fim_hide()
 
     let l:pos_x = col('.') - 1
     let l:pos_y = line('.')
@@ -736,7 +728,6 @@ function! s:fim_try_hint(pos_x, pos_y)
     " Check if the completion is cached
     let l:raw = get(g:cache_data, l:hash, v:null)
 
-    " ... or if there is a cached completion nearby (10 characters behind)
     " Looks at the previous 10 characters to see if a completion is cached. If one is found at (x,y)
     " then it checks that the characters typed after (x,y) match up with the cached completion result.
     if l:raw == v:null
@@ -755,16 +746,16 @@ function! s:fim_try_hint(pos_x, pos_y)
                 endif
 
                 let l:response = json_decode(l:response_cached)
-                if l:response['content'][0:i] !=# l:removed
+                if l:response['response'][0:i] !=# l:removed
                     continue
                 endif
 
-                let l:response['content'] = l:response['content'][i + 1:]
-                if len(l:response['content']) > 0
+                let l:response['response'] = l:response['response'][i + 1:]
+                if len(l:response['response']) > 0
                     if l:raw == v:null
                         let l:raw = json_encode(l:response)
-                    elseif len(l:response['content']) > l:best
-                        let l:best = len(l:response['content'])
+                    elseif len(l:response['response']) > l:best
+                        let l:best = len(l:response['response'])
                         let l:raw = json_encode(l:response)
                     endif
                 endif
@@ -777,7 +768,7 @@ function! s:fim_try_hint(pos_x, pos_y)
 
         " run async speculative FIM in the background for this position
         if s:hint_shown
-            call llama#fim(l:pos_x, l:pos_y, v:true, s:fim_data['content'], v:true)
+            call ollama#fim(l:pos_x, l:pos_y, v:true, s:fim_data['content'], v:true)
         endif
     endif
 endfunction
@@ -808,7 +799,7 @@ function! s:fim_render(pos_x, pos_y, data)
     if l:can_accept
         let l:response = json_decode(l:raw)
 
-        for l:part in split(get(l:response, 'content', ''), "\n", 1)
+        for l:part in split(get(l:response, 'response', ''), "\n", 1)
             call add(l:content, l:part)
         endfor
 
@@ -817,19 +808,14 @@ function! s:fim_render(pos_x, pos_y, data)
             call remove(l:content, -1)
         endwhile
 
-        let l:n_cached  = get(l:response, 'tokens_cached', 0)
-        let l:truncated = get(l:response, 'timings/truncated', v:false)
+        let l:n_cached  = 0  " Ollama doesn't provide this info
+        let l:truncated = v:false  " Ollama doesn't provide this info
 
         " if response.timings is available
-        if has_key(l:response, 'timings/prompt_n') && has_key(l:response, 'timings/prompt_ms') && has_key(l:response, 'timings/prompt_per_second')
-            \ && has_key(l:response, 'timings/predicted_n') && has_key(l:response, 'timings/predicted_ms') && has_key(l:response, 'timings/predicted_per_second')
-            let l:n_prompt    = get(l:response, 'timings/prompt_n', 0)
-            let l:t_prompt_ms = get(l:response, 'timings/prompt_ms', 1)
-            let l:s_prompt    = get(l:response, 'timings/prompt_per_second', 0)
-
-            let l:n_predict    = get(l:response, 'timings/predicted_n', 0)
-            let l:t_predict_ms = get(l:response, 'timings/predicted_ms', 1)
-            let l:s_predict    = get(l:response, 'timings/predicted_per_second', 0)
+        if has_key(l:response, 'eval_count') && has_key(l:response, 'eval_duration')
+            let l:n_predict    = get(l:response, 'eval_count', 0)
+            let l:t_predict_ms = get(l:response, 'eval_duration', 1) / 1000000.0  " Convert from ns to ms
+            let l:s_predict    = l:n_predict / (l:t_predict_ms / 1000.0)  " tokens per second
         endif
 
         let l:has_info = v:true
@@ -928,25 +914,25 @@ function! s:fim_render(pos_x, pos_y, data)
     let l:info = ''
 
     " construct the info message
-    if g:llama_config.show_info > 0 && l:has_info
+    if g:ollama_config.show_info > 0 && l:has_info
         let l:prefix = '   '
 
         if l:truncated
-            let l:info = printf("%s | WARNING: the context is full: %d, increase the server context size or reduce g:llama_config.ring_n_chunks",
-                \ g:llama_config.show_info == 2 ? l:prefix : 'llama.vim',
+            let l:info = printf("%s | WARNING: the context is full: %d, increase the server context size or reduce g:ollama_config.ring_n_chunks",
+                \ g:ollama_config.show_info == 2 ? l:prefix : 'ollama.vim',
                 \ l:n_cached
                 \ )
         else
             let l:info = printf("%s | c: %d, r: %d/%d, e: %d, q: %d/16, C: %d/%d | p: %d (%.2f ms, %.2f t/s) | g: %d (%.2f ms, %.2f t/s)",
-                \ g:llama_config.show_info == 2 ? l:prefix : 'llama.vim',
-                \ l:n_cached,  len(s:ring_chunks), g:llama_config.ring_n_chunks, s:ring_n_evict, len(s:ring_queued),
-                \ len(keys(g:cache_data)), g:llama_config.max_cache_keys,
+                \ g:ollama_config.show_info == 2 ? l:prefix : 'ollama.vim',
+                \ l:n_cached,  len(s:ring_chunks), g:ollama_config.ring_n_chunks, s:ring_n_evict, len(s:ring_queued),
+                \ len(keys(g:cache_data)), g:ollama_config.max_cache_keys,
                 \ l:n_prompt,  l:t_prompt_ms,  l:s_prompt,
                 \ l:n_predict, l:t_predict_ms, l:s_predict
                 \ )
         endif
 
-        if g:llama_config.show_info == 1
+        if g:ollama_config.show_info == 1
             " display the info in the statusline
             let &statusline = l:info
             let l:info = ''
@@ -956,12 +942,12 @@ function! s:fim_render(pos_x, pos_y, data)
     " display the suggestion and append the info to the end of the first line
     if s:ghost_text_nvim
         call nvim_buf_set_extmark(l:bufnr, l:id_vt_fim, l:pos_y - 1, l:pos_x - 1, {
-            \ 'virt_text': [[l:content[0], 'llama_hl_hint'], [l:info, 'llama_hl_info']],
+            \ 'virt_text': [[l:content[0], 'ollama_hl_hint'], [l:info, 'ollama_hl_info']],
             \ 'virt_text_win_col': virtcol('.') - 1
             \ })
 
         call nvim_buf_set_extmark(l:bufnr, l:id_vt_fim, l:pos_y - 1, 0, {
-            \ 'virt_lines': map(l:content[1:], {idx, val -> [[val, 'llama_hl_hint']]}),
+            \ 'virt_lines': map(l:content[1:], {idx, val -> [[val, 'ollama_hl_hint']]}),
             \ 'virt_text_win_col': virtcol('.')
             \ })
     elseif s:ghost_text_vim
@@ -991,9 +977,9 @@ function! s:fim_render(pos_x, pos_y, data)
     endif
 
     " setup accept shortcuts
-    exe 'inoremap <buffer> ' . g:llama_config.keymap_accept_full . ' <C-O>:call llama#fim_accept(''full'')<CR>'
-    exe 'inoremap <buffer> ' . g:llama_config.keymap_accept_line . ' <C-O>:call llama#fim_accept(''line'')<CR>'
-    exe 'inoremap <buffer> ' . g:llama_config.keymap_accept_word . ' <C-O>:call llama#fim_accept(''word'')<CR>'
+    exe 'inoremap <buffer> ' . g:ollama_config.keymap_accept_full . ' <C-O>:call ollama#fim_accept(''full'')<CR>'
+    exe 'inoremap <buffer> ' . g:ollama_config.keymap_accept_line . ' <C-O>:call ollama#fim_accept(''line'')<CR>'
+    exe 'inoremap <buffer> ' . g:ollama_config.keymap_accept_word . ' <C-O>:call ollama#fim_accept(''word'')<CR>'
 
     let s:hint_shown = v:true
 
@@ -1009,7 +995,7 @@ endfunction
 " if accept_type == 'full', accept entire response
 " if accept_type == 'line', accept only the first line of the response
 " if accept_type == 'word', accept only the first word of the response
-function! llama#fim_accept(accept_type)
+function! ollama#fim_accept(accept_type)
     let l:pos_x  = s:fim_data['pos_x']
     let l:pos_y  = s:fim_data['pos_y']
 
@@ -1052,10 +1038,10 @@ function! llama#fim_accept(accept_type)
         endif
     endif
 
-    call llama#fim_hide()
+    call ollama#fim_hide()
 endfunction
 
-function! llama#fim_hide()
+function! ollama#fim_hide()
     let s:hint_shown = v:false
 
     " clear the virtual text
@@ -1070,7 +1056,7 @@ function! llama#fim_hide()
     endif
 
     " remove the mappings
-    exe 'silent! iunmap <buffer> ' . g:llama_config.keymap_accept_full
-    exe 'silent! iunmap <buffer> ' . g:llama_config.keymap_accept_line
-    exe 'silent! iunmap <buffer> ' . g:llama_config.keymap_accept_word
+    exe 'silent! iunmap <buffer> ' . g:ollama_config.keymap_accept_full
+    exe 'silent! iunmap <buffer> ' . g:ollama_config.keymap_accept_line
+    exe 'silent! iunmap <buffer> ' . g:ollama_config.keymap_accept_word
 endfunction
