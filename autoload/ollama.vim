@@ -42,7 +42,9 @@ highlight ollama_hl_info guifg=#77ff2f ctermfg=119
 "   keymap_accept_word: keymap to accept word suggestion, default: <C-B>
 "
 let s:default_config = {
-    \ 'endpoint':           'http://127.0.0.1:11434/api/generate',
+    \ 'base_url':           'http://127.0.0.1:11434',
+    \ 'endpoint':           '',
+    \ 'endpoint_tags':      '',
     \ 'model':              '',
     \ 'api_key':            '',
     \ 'n_prefix':           256,
@@ -105,7 +107,7 @@ endfunction
 
 function! ollama#disable()
     call ollama#fim_hide()
-    autocmd! ollama
+    silent! autocmd! ollama
     exe "silent! iunmap " .. g:ollama_config.keymap_trigger
 endfunction
 
@@ -125,6 +127,12 @@ function ollama#setup_commands()
 endfunction
 
 function! ollama#init()
+    call ollama#setup_commands()
+
+    if !g:ollama_enabled
+        return
+    endif
+
     if !executable('curl')
         echohl WarningMsg
         echo 'ollama.vim requires the "curl" command to be available'
@@ -141,7 +149,48 @@ function! ollama#init()
         return
     endif
 
-    call ollama#setup_commands()
+    " Check if model is available
+    let endpoint_tags = g:ollama_config.endpoint_tags
+    if endpoint_tags == ''
+        let endpoint_tags = g:ollama_config.base_url . '/api/tags'
+    endif
+    let l:model_check = ['curl', '--silent', '--request', 'GET', '--url', endpoint_tags]
+    let l:result = system(join(l:model_check, ' '))
+    if v:shell_error != 0
+        echohl ErrorMsg
+        echo 'Failed to check model availability. Please ensure Ollama server is running.'
+        echohl None
+        return
+    endif
+
+    try
+        let l:response = json_decode(l:result)
+        let l:models = get(l:response, 'models', [])
+        let l:model_found = v:false
+
+        for l:model in l:models
+            if get(l:model, 'name', '') == g:ollama_config.model
+                let l:model_found = v:true
+                break
+            elseif get(l:model, 'name', '') == g:ollama_config.model . ':latest'
+                let l:model_found = v:true
+                break
+            endif
+        endfor
+
+        if !l:model_found
+            echohl ErrorMsg
+            echo 'Model "' . g:ollama_config.model . '" is not available. Please pull it first using:'
+            echo 'ollama pull ' . g:ollama_config.model
+            echohl None
+            return
+        endif
+    catch /.*/
+        echohl ErrorMsg
+        echo 'Failed to parse model list response: ' . v:exception
+        echohl None
+        return
+    endtry
 
     let s:fim_data = {}
 
@@ -365,12 +414,16 @@ function! s:ring_update()
         \ }
         \ })
 
+    let endpoint = g:ollama_config.endpoint
+    if endpoint == ''
+        let endpoint = g:ollama_config.base_url . '/api/generate'
+    endif
     let l:curl_command = [
         \ "curl",
         \ "--silent",
         \ "--no-buffer",
         \ "--request", "POST",
-        \ "--url", g:ollama_config.endpoint,
+        \ "--url", endpoint,
         \ "--header", "Content-Type: application/json",
         \ "--data", "@-",
         \ ]
@@ -600,12 +653,16 @@ function! ollama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
         \ }
         \ })
 
+    let endpoint = g:ollama_config.endpoint
+    if endpoint == ''
+        let endpoint = g:ollama_config.base_url . '/api/generate'
+    endif
     let l:curl_command = [
         \ "curl",
         \ "--silent",
         \ "--no-buffer",
         \ "--request", "POST",
-        \ "--url", g:ollama_config.endpoint,
+        \ "--url", endpoint,
         \ "--header", "Content-Type: application/json",
         \ "--data", "@-",
         \ ]
@@ -1047,10 +1104,10 @@ function! ollama#fim_hide()
     " clear the virtual text
     let l:bufnr = bufnr('%')
 
-    if s:ghost_text_nvim
+    if exists('s:ghost_text_nvim') && s:ghost_text_nvim
         let l:id_vt_fim = nvim_create_namespace('vt_fim')
         call nvim_buf_clear_namespace(l:bufnr, l:id_vt_fim,  0, -1)
-    elseif s:ghost_text_vim
+    elseif exists('s:ghost_text_vim') && s:ghost_text_vim
         call prop_remove({'type': s:hlgroup_hint, 'all': v:true})
         call prop_remove({'type': s:hlgroup_info, 'all': v:true})
     endif
