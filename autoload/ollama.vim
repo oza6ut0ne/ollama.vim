@@ -43,8 +43,9 @@ highlight ollama_hl_info guifg=#77ff2f ctermfg=119
 "
 let s:default_config = {
     \ 'base_url':           'http://127.0.0.1:11434',
+    \ 'provider':           'ollama',
     \ 'endpoint':           '',
-    \ 'endpoint_tags':      '',
+    \ 'endpoint_models':    '',
     \ 'model':              '',
     \ 'api_key':            '',
     \ 'n_prefix':           256,
@@ -54,6 +55,7 @@ let s:default_config = {
     \ 't_max_predict_ms':   1000,
     \ 'show_info':          2,
     \ 'auto_fim':           v:true,
+    \ 'check_model':        v:true,
     \ 'max_line_suffix':    8,
     \ 'max_cache_keys':     250,
     \ 'ring_n_chunks':      16,
@@ -150,47 +152,62 @@ function! ollama#init()
     endif
 
     " Check if model is available
-    let endpoint_tags = g:ollama_config.endpoint_tags
-    if endpoint_tags == ''
-        let endpoint_tags = g:ollama_config.base_url . '/api/tags'
-    endif
-    let l:model_check = ['curl', '--silent', '--request', 'GET', '--url', endpoint_tags]
-    let l:result = system(join(l:model_check, ' '))
-    if v:shell_error != 0
-        echohl ErrorMsg
-        echo 'Failed to check model availability. Please ensure Ollama server is running.'
-        echohl None
-        return
-    endif
-
-    try
-        let l:response = json_decode(l:result)
-        let l:models = get(l:response, 'models', [])
-        let l:model_found = v:false
-
-        for l:model in l:models
-            if get(l:model, 'name', '') == g:ollama_config.model
-                let l:model_found = v:true
-                break
-            elseif get(l:model, 'name', '') == g:ollama_config.model . ':latest'
-                let l:model_found = v:true
-                break
+    if g:ollama_config.check_model
+        let endpoint_models = g:ollama_config.endpoint_models
+        if endpoint_models == ''
+            let endpoint_models = g:ollama_config.base_url . '/api/tags'
+            if g:ollama_config.provider == 'openai'
+                let endpoint_models = g:ollama_config.base_url . '/v1/models'
             endif
-        endfor
+        endif
+        let l:model_check = ['curl', '--silent', '--request', 'GET', '--url', endpoint_models]
+        if exists ("g:ollama_config.api_key") && len("g:ollama_config.api_key") > 0
+            call extend(l:model_check, ['--header', '"Authorization: Bearer ' .. g:ollama_config.api_key .. '"'])
+        endif
 
-        if !l:model_found
+        let l:result = system(join(l:model_check, ' '))
+        if v:shell_error != 0
             echohl ErrorMsg
-            echo 'Model "' . g:ollama_config.model . '" is not available. Please pull it first using:'
-            echo 'ollama pull ' . g:ollama_config.model
+            echo 'Failed to check model availability. Please ensure Ollama server is running.'
             echohl None
             return
         endif
-    catch /.*/
-        echohl ErrorMsg
-        echo 'Failed to parse model list response: ' . v:exception
-        echohl None
-        return
-    endtry
+
+        try
+            let l:key_models = 'models'
+            let l:key_name = 'name'
+            if g:ollama_config.provider == 'openai'
+                let l:key_models = 'data'
+                let l:key_name = 'id'
+            endif
+            let l:response = json_decode(l:result)
+            let l:models = get(l:response, l:key_models, [])
+            let l:model_found = v:false
+
+            for l:model in l:models
+                if get(l:model, l:key_name, '') == g:ollama_config.model
+                    let l:model_found = v:true
+                    break
+                elseif get(l:model, l:key_name, '') == g:ollama_config.model . ':latest'
+                    let l:model_found = v:true
+                    break
+                endif
+            endfor
+
+            if !l:model_found
+                echohl ErrorMsg
+                echo 'Model "' . g:ollama_config.model . '" is not available. Please pull it first using:'
+                echo 'ollama pull ' . g:ollama_config.model
+                echohl None
+                return
+            endif
+        catch /.*/
+            echohl ErrorMsg
+            echo 'Failed to parse model list response: ' . v:exception
+            echohl None
+            return
+        endtry
+    endif
 
     let s:fim_data = {}
 
@@ -413,10 +430,23 @@ function! s:ring_update()
         \     'top_p': 0.90
         \ }
         \ })
+    if g:ollama_config.provider == 'openai'
+        let l:request = json_encode({
+            \ 'model': g:ollama_config.model,
+            \ 'prompt': "",
+            \ 'suffix': "",
+            \ 'stream': v:false,
+            \ 'temperature': 0.7,
+            \ 'top_p': 0.90
+            \ })
+    endif
 
     let endpoint = g:ollama_config.endpoint
     if endpoint == ''
         let endpoint = g:ollama_config.base_url . '/api/generate'
+        if g:ollama_config.provider == 'openai'
+            let endpoint = g:ollama_config.base_url . '/v1/completions'
+        endif
     endif
     let l:curl_command = [
         \ "curl",
@@ -652,10 +682,23 @@ function! ollama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
         \     'top_p': 0.90
         \ }
         \ })
+    if g:ollama_config.provider == 'openai'
+        let l:request = json_encode({
+            \ 'model': g:ollama_config.model,
+            \ 'prompt': l:prefix . l:middle,
+            \ 'suffix': l:suffix,
+            \ 'stream': v:false,
+            \ 'temperature': 0.7,
+            \ 'top_p': 0.90
+            \ })
+    endif
 
     let endpoint = g:ollama_config.endpoint
     if endpoint == ''
         let endpoint = g:ollama_config.base_url . '/api/generate'
+        if g:ollama_config.provider == 'openai'
+            let endpoint = g:ollama_config.base_url . '/v1/completions'
+        endif
     endif
     let l:curl_command = [
         \ "curl",
@@ -803,17 +846,33 @@ function! s:fim_try_hint(pos_x, pos_y)
                 endif
 
                 let l:response = json_decode(l:response_cached)
-                if l:response['response'][0:i] !=# l:removed
-                    continue
-                endif
+                if g:ollama_config.provider == 'openai'
+                    if l:response['choices'][0]['text'][0:i] !=# l:removed
+                        continue
+                    endif
 
-                let l:response['response'] = l:response['response'][i + 1:]
-                if len(l:response['response']) > 0
-                    if l:raw == v:null
-                        let l:raw = json_encode(l:response)
-                    elseif len(l:response['response']) > l:best
-                        let l:best = len(l:response['response'])
-                        let l:raw = json_encode(l:response)
+                    let l:response['choices'][0]['text'] = l:response['choices'][0]['text'][i + 1:]
+                    if len(l:response['choices'][0]['text']) > 0
+                        if l:raw == v:null
+                            let l:raw = json_encode(l:response)
+                        elseif len(l:response['choices'][0]['text']) > l:best
+                            let l:best = len(l:response['choices'][0]['text'])
+                            let l:raw = json_encode(l:response)
+                        endif
+                    endif
+                else
+                    if l:response['response'][0:i] !=# l:removed
+                        continue
+                    endif
+
+                    let l:response['response'] = l:response['response'][i + 1:]
+                    if len(l:response['response']) > 0
+                        if l:raw == v:null
+                            let l:raw = json_encode(l:response)
+                        elseif len(l:response['response']) > l:best
+                            let l:best = len(l:response['response'])
+                            let l:raw = json_encode(l:response)
+                        endif
                     endif
                 endif
             endif
@@ -856,9 +915,15 @@ function! s:fim_render(pos_x, pos_y, data)
     if l:can_accept
         let l:response = json_decode(l:raw)
 
-        for l:part in split(get(l:response, 'response', ''), "\n", 1)
-            call add(l:content, l:part)
-        endfor
+        if g:ollama_config.provider == 'openai'
+            for l:part in split(get(l:response, 'choices', [{'text': ''}])[0]['text'], "\n", 1)
+                call add(l:content, l:part)
+            endfor
+        else
+            for l:part in split(get(l:response, 'response', ''), "\n", 1)
+                call add(l:content, l:part)
+            endfor
+        endif
 
         " remove trailing new lines
         while len(l:content) > 0 && l:content[-1] == ""
